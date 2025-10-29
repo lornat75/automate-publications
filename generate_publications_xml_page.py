@@ -1021,13 +1021,31 @@ def build_html(records: List[Dict], *, title: str) -> str:
         by_year.setdefault(year_raw, []).append(r)
     years = sorted(by_year.keys(), reverse=True)
 
+    # Emit site layout identical to existing pages (container + top nav)
     lines = [
-        "<!DOCTYPE html>",
-        "<html><head>",
-        '<meta charset="utf-8" />',
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">',
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head>',
+        '<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />',
         '<link rel="stylesheet" type="text/css" href="style.css" />',
-        f"<title>{html.escape(title)}</title>",
-        "</head><body>",
+        "<title>Lorenzo Natale's home page</title>",
+        '<script type="text/javascript" src="js/jquery.js"></script>',
+        '',
+        '</head>',
+        '',
+        '<body>',
+        '<div id="container">',
+        '<div id="nav">',
+        '<div id="logo"><a href="default.htm"><br />',
+        '</a></div>',
+        '<ul>',
+        '<li><a href="index.html">Home</a><span class="nav_text">Welcome to my site</span></li>',
+        '<li><a href="bio.html">Brief Bio</a><span class="nav_text">Brief biography</span></li>',
+        '<li><a href="publications.html">Publications</a><span class="nav_text">Full publication list</span></li>',
+        '<li><a href="research.html">Research</a><span class="nav_text">My research and projects</span></li>',
+        '</ul>',
+        '</div>',
+        '',
+        '<!-- close nav -->',
         '<div id="left-publications">',
         f"<h2>{html.escape(title)}</h2><br/>",
     ]
@@ -1039,7 +1057,10 @@ def build_html(records: List[Dict], *, title: str) -> str:
             if rendered:
                 lines.append(rendered)
         lines.append("</ul>")
-    lines.append("</div></body></html>")
+    # close left-publications and container, then body/html
+    lines.append("</div>")
+    lines.append("</div>")
+    lines.append("</body></html>")
     return "\n".join(lines) + "\n"
 
 
