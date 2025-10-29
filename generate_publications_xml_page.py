@@ -210,6 +210,31 @@ def parse_records(xml_path: str) -> List[Dict]:
         rec['authors'] = authors
         rec['editors'] = editors
 
+        # URLs: distinguish related (project) urls from pdf urls
+        related_urls = all_text(rnode, './urls/related-urls/url')
+        pdf_urls = all_text(rnode, './urls/pdf-urls/url')
+        # fallback: some exports put urls directly under ./urls/url
+        if not related_urls:
+            related_urls = all_text(rnode, './urls/url')
+
+        # Prepare initial extra links: prefer a project page from related_urls if present
+        initial_links = []
+        for u in related_urls:
+            if not u:
+                continue
+            low = u.lower()
+            # skip obvious DOIs and PDF links
+            if low.endswith('.pdf'):
+                continue
+            if re.search(r"10\.\d{4,9}/", u):
+                continue
+            # first sensible related URL treat as a project page
+            initial_links.append(('project page', u))
+            break
+        # include the first pdf url as an available fulltext link (kept for later merging)
+        if pdf_urls:
+            initial_links.append(('pdf', pdf_urls[0]))
+
         # DOI extraction (explicit fields or from URLs/texts)
         doi = ''
         for candidate in rnode.findall('.//electronic-resource-num'):
@@ -249,7 +274,8 @@ def parse_records(xml_path: str) -> List[Dict]:
                         doi = f"10.48550/arXiv.{aid}"
                         break
         rec['doi'] = normalize_doi(doi)
-        rec['extra_links'] = []  # placeholder for later augmentation
+        # Seed any initial links discovered in the XML (project page, pdf)
+        rec['extra_links'] = initial_links
         recs.append(rec)  # type: ignore
     return recs
 
