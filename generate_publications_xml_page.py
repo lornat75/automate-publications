@@ -39,7 +39,7 @@ from __future__ import annotations
 import argparse
 import html
 import xml.etree.ElementTree as ET
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Set
 import re
 import sys
 from pathlib import Path
@@ -559,7 +559,36 @@ def crossref_lookup(title: str, authors: List[str], year: str, mailto: Optional[
     return None
 
 
-def augment_records(records: List[Dict], *, cache: Dict[str, Dict], limit: Optional[int], delay: float, verbose: bool, use_openaire: bool, use_crossref: bool, mailto: Optional[str], crossref_threshold: float, crossref_exact: bool, arxiv_exact: bool) -> None:
+def _remove_anchor_tags(html_text: str) -> str:
+    """Remove <a ...>...</a> tags and normalize whitespace to single spaces."""
+    # remove anchors
+    s = re.sub(r"<a\b[^>]*>.*?</a>", "", html_text, flags=re.I | re.S)
+    # collapse whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+    # remove space before closing li
+    s = re.sub(r"\s*</li>\s*$", "</li>", s, flags=re.I)
+    # remove space after opening li
+    s = re.sub(r"^\s*<li>\s*", "<li>", s, flags=re.I)
+    return s
+
+
+def _li_keys_for_record(rec: Dict) -> List[str]:
+    """Return normalized keys representing the record as it appears in HTML (without links).
+
+    We use the current HTML list item produced by format_entry(rec), remove any anchor tags,
+    and return two variants:
+      1) with the surrounding <li>...</li>
+      2) inner content only (without the <li> wrappers)
+    """
+    li = format_entry(rec) or ""
+    li_nolinks = _remove_anchor_tags(li)
+    inner = li_nolinks
+    if inner.lower().startswith("<li>") and inner.lower().endswith("</li>"):
+        inner = inner[4:-5].strip()
+    return [li_nolinks, inner]
+
+
+def augment_records(records: List[Dict], *, cache: Dict[str, Dict], limit: Optional[int], delay: float, verbose: bool, use_openaire: bool, use_crossref: bool, mailto: Optional[str], crossref_threshold: float, crossref_exact: bool, arxiv_exact: bool, skip_set: Optional[Set[str]] = None) -> None:
     """Augment records with arXiv / OpenAIRE (conditional) links.
 
     Performance optimization:
@@ -575,6 +604,27 @@ def augment_records(records: List[Dict], *, cache: Dict[str, Dict], limit: Optio
         title = rec.get('title') or ''
         title_norm = norm_title_for_lookup(title)
         doi = rec.get('doi') or ''
+
+        # Respect skip list: if the record's rendered HTML (without links) matches an entry,
+        # we skip all lookups for this record.
+        if skip_set:
+            keys = _li_keys_for_record(rec)
+            if any(k in skip_set for k in keys):
+                if verbose:
+                    print(f"[skip-lookups] {title}")
+                # Still ensure cache has a minimal entry for consistency
+                key_tmp = doi or f"title::{title_norm}"
+                cache.setdefault(key_tmp, {
+                    'arxiv': None,
+                    'full': None,
+                    'full_license': None,
+                    'found_doi': doi or None,
+                    'source_title_norm': title_norm,
+                    'source_doi': doi or None,
+                    'source_title': title,
+                })
+                # Do not add any preprint/fulltext links; continue to next
+                continue
 
         # Primary cache key (prefer existing DOI, else normalized title)
         key = doi or f"title::{title_norm}"
@@ -1089,6 +1139,7 @@ def main():
     ap.add_argument("--verbose", action="store_true", help="Verbose lookup logging")
     ap.add_argument("--pdf-dir", help="Directory containing locally named PDFs (<year>-<surname>-<titlekey>.pdf) to auto-link as [pdf]")
     ap.add_argument("--bib-dir", help="Directory to write per-record .bib files (one .bib per entry)")
+    ap.add_argument("--skip-list", help="Path to a file OR directory containing references (one per line) to SKIP lookups for. Use the same HTML line as in the generated page; link anchors are ignored.")
     args = ap.parse_args()
 
     if not Path(args.xml_path).is_file():
@@ -1127,6 +1178,42 @@ def main():
                 if fd:
                     rec['doi'] = fd
 
+        # Load skip list if provided
+        skip_set: Optional[Set[str]] = None
+        if args.skip_list:
+            def _read_skip_file(fp: Path) -> List[str]:
+                try:
+                    lines = [ln.strip() for ln in fp.read_text(encoding='utf-8').splitlines()]
+                except Exception:
+                    return []
+                out: List[str] = []
+                for ln in lines:
+                    if not ln or ln.startswith('#'):
+                        continue
+                    # Normalize similar to runtime
+                    ln_norm = _remove_anchor_tags(ln)
+                    out.append(ln_norm)
+                    # Also include inner-only variant
+                    inner = ln_norm
+                    if inner.lower().startswith('<li>') and inner.lower().endswith('</li>'):
+                        inner = inner[4:-5].strip()
+                    out.append(inner)
+                return out
+
+            sp = Path(args.skip_list)
+            items: List[str] = []
+            if sp.is_dir():
+                # Read all .txt files in directory
+                for child in sorted(sp.iterdir()):
+                    if child.is_file() and child.suffix.lower() == '.txt':
+                        items.extend(_read_skip_file(child))
+            elif sp.is_file():
+                items.extend(_read_skip_file(sp))
+            if items:
+                skip_set = set(items)
+                if args.verbose:
+                    print(f"[skip-list] loaded {len(skip_set)} entries from {args.skip_list}")
+
         augment_records(
             recs,
             cache=cache,
@@ -1139,6 +1226,7 @@ def main():
             crossref_threshold=1.0 if args.crossref_exact else max(0.0, min(1.0, args.crossref_threshold)),
             crossref_exact=args.crossref_exact,
             arxiv_exact=args.arxiv_exact,
+            skip_set=skip_set,
         )
         save_cache(args.cache, cache)
     # Always attach DOI links (after possible augmentation) so they appear before rendering

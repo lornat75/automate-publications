@@ -1,101 +1,176 @@
-# Publications processing tools
+# lornat75.github.io
 
-Small Python utilities to parse EndNote XML exports and generate enriched HTML publication pages.
+Personal homepage repository.
 
-All scripts use only the Python standard library. Python 3.8+ recommended.
+## Generating `publications.html` from an EndNote XML export
 
-## Tools
+The repo contains tooling to convert an EndNote XML export directly into a year‑grouped HTML page that matches the style of the manually maintained `publications.html`.
 
-- `parse_endnote_xml.py` — parses an EndNote XML export (`.xml`)
-- `generate_publications_xml_page.py` — build a fresh publications HTML page directly from an EndNote XML export with optional online enrichment (arXiv preprints, Crossref DOI completion, optional OpenAIRE fulltext)
+### 1. Export references from EndNote
+1. In EndNote select the references you want to export (or the whole library).
+2. File → Export…
+3. Choose a filename like `exported.xml`.
+4. Set output format to **XML** (not RIS, not plain text) and save.
 
-## Data schema (shared)
-
-Each parsed publication is a dictionary with:
-
-- `id`: stable identifier; `doi:<lowercase-doi>` when available, otherwise `title:<slugified-title>:<year>`
-- `year`: integer year if detectable
-- `authors`: list of strings, each like `Surname, I.` (multiple initials preserved)
-- `title`: string
-- `venue`: free-form description (journal/conference/volume info parsed from the text following the title)
-- `doi`: DOI string if found (without the `https://doi.org/` prefix)
-- `preprint_url`: URL to preprint if present
-- `fulltext_url`: best-guess full text URL (`fulltext`/`online text`/`pdf` preferred)
-- `bibtex_url`: URL to a .bib entry if present
-- `links`: mapping of all discovered anchor texts (lowercased) to URLs
-- `source`: `html` or `endnote-xml`
-
-## Quick start
-
-From the repository root:
+### 2. Generate the base HTML page
+Use the script `tools/generate_publications_xml_page.py` (pure Python 3 standard library).
 
 ```bash
-# Parse an EndNote XML export (File -> Export -> XML in EndNote)
-python3 tools/parse_endnote_xml.py /path/to/export.xml --print
-python3 tools/parse_endnote_xml.py /path/to/export.xml --json tools/endnote_publications.json
+python3 tools/generate_publications_xml_page.py exported.xml \
+		--out xml_publications.html \
+		--title "Publications"
 ```
 
-### Generate a new enriched HTML page from EndNote XML
+What it does:
+* Parses the EndNote XML records.
+* Normalizes authors to “Surname, I.” format.
+* Groups entries by year (descending) and renders `<ul>` lists under `<h3>YEAR</h3>` sections.
+* Attempts a best‑effort formatting based on record type (conference, journal, book section, etc.).
+* Skips entries whose fields contain “under submission”.
+
+### 3. (Optional) Add Open Access / preprint links
+You can have the generator call Unpaywall (and arXiv as fallback) to attach labeled links such as `[arxiv]`, `[publisher]`, or repository labels.
 
 ```bash
-# Basic (no network lookups)
-python3 tools/generate_publications_xml_page.py /path/to/export.xml --out publications-from-xml.html
-
-# With arXiv + Crossref DOI completion (recommended) using a polite User-Agent including your email
-python3 tools/generate_publications_xml_page.py /path/to/export.xml --out publications-from-xml.html \
-	--lookup --crossref --mailto you@example.com --cache tools/oa_cache.json
-
-# Add OpenAIRE fulltext discovery (slower, optional)
-python3 tools/generate_publications_xml_page.py /path/to/export.xml --out publications-from-xml.html \
-	--lookup --crossref --openaire --mailto you@example.com --cache tools/oa_cache.json --delay 0.5
-
-# Limit to first N records for quick tests
-python3 tools/generate_publications_xml_page.py /path/to/export.xml --out test.html \
-	--lookup --crossref --limit 10 --verbose
+python3 tools/generate_publications_xml_page.py exported.xml \
+		--out xml_publications_oa.html \
+		--title "Publications" \
+		--augment-open-access \
+		--unpaywall-email you@example.com \
+		--oa-cache oa_lookup_cache.json
 ```
-
-Key flags:
-
-- `--lookup` enable any network augmentation.
-- `--crossref` fill in missing DOIs via Crossref (authoritative DOI source). Provide `--mailto` for etiquette.
-- `--openaire` (off by default) attempt OpenAIRE lookups BUT only for records whose DOI is an arXiv DOI (10.48550/arXiv.*); if found open-licensed, adds `[fulltext]`.
-- `--cache <file>` JSON cache of previous lookups (speeds repeated runs; safe to commit if desired).
-- `--limit N` process only first N records (applies to lookups) for experimentation.
-- `--delay S` sleep S seconds between new (non-cached) requests to be gentle to APIs.
-- `--verbose` print lookup / cache diagnostics.
-
-Link labels in generated HTML:
-
-- `[preprint]` an arXiv abstract page (always included if arXiv found or implied by 10.48550/arXiv DOI).
-- `[doi]` canonical DOI resolver link (always included when a DOI is known or discovered).
-- `[fulltext]` open licensed version discovered via OpenAIRE (only when `--openaire` used AND DOI is an arXiv DOI AND license is permissive: CC-BY/SA, CC0, Public Domain).
-
-Filtering rules:
-- Entries whose titles or notes indicate "under submission", "under review", "in review", "submitted" are skipped.
-- Records with unparseable years or year outside reasonable range (19xx/20xx) are ignored.
-
-Caching details:
-- Cache key is DOI when present, else a normalized title fingerprint (lower-case alphanumerics collapsed).
-- Stored fields: `arxiv`, `full`, `full_license`, `found_doi`, `source_title_norm`, `source_doi`, `source_title` (human-readable title for easier manual inspection).
-- Automatic refresh: if the normalized title or DOI in the source XML differs from `source_title_norm` / `source_doi` in cache, the entry is invalidated and re-fetched.
-- Delete the cache file to force fresh lookups.
-
-Verbose logging (`--verbose`):
-- `[cache] <key> title="…" doi=…` — cache hit, no network calls.
-- `[cache-refresh] invalidated <key> (title/doi changed)` — cached metadata differs from current XML; entry discarded and re-fetched.
-- `[lookup-start] <key> title="…" doi=…` — beginning network augmentation for a cache miss.
-- `[lookup] <key> arxiv=<url-or-None> full=<url-or-None> lic=<license-or-None>` — results after performing arXiv (and conditional OpenAIRE) lookups; new cache entry written.
 
 Notes:
-- A record that later acquires a DOI (via Crossref) will generate a new DOI-based cache key; the older `title::` key can be left or manually pruned—functionality is unaffected.
-- `found_doi` records a DOI discovered via Crossref so subsequent runs can skip another query even if the original XML still lacks it.
+* `--unpaywall-email` is required by the Unpaywall API usage policy (a real contact email).
+* `--oa-cache` stores a JSON cache of DOI lookups so subsequent runs are fast and offline‑friendly.
+* If Unpaywall does not yield an OA link but the DOI exists on arXiv, an `[arxiv]` link is added.
 
-## Notes and assumptions
+Additional arXiv/Notes behaviour
+* The generator also inspects the EndNote `Notes` field for DOIs or arXiv identifiers/URLs. If a DOI of the form `10.48550/arXiv.<id>` or an arXiv URL/ID is present in `Notes`, that arXiv preprint is used directly (no title‑based search).
+* By default the script requires a near‑exact canonical title match for arXiv results (this avoids false positives). You can opt out with `--no-arxiv-exact` if you prefer a looser matching strategy.
+* Use `--clean-cache` to remove the lookup cache file before running (forces fresh network lookups).
 
-- EndNote XML parser expects an XML export (not `.enl`), and reads typical fields like titles, periodical full title, year, authors, and related/pdf URLs.
-- Author strings are processed heuristically; initials like `G.M.` are preserved.
-- DOIs are extracted from inline text or DOI URLs.
+### 4. (Optional) Merge discovered links into the hand‑maintained page
+If you keep editing `publications.html` manually but want to bring in new links (arXiv/publisher/repository/pdf) found in the generated file, use the merge tool:
 
-## Notes on EndNote XML
+```bash
+python3 tools/merge_fulltext_links.py \
+		--from xml_publications_oa.html \
+		--into publications.html \
+		--out publications_merged.html \
+		--match-year
+```
 
-Export from EndNote using File -> Export -> XML. Native `.enl` libraries are proprietary; use XML for comparison.
+Explanation:
+* Uses the italicized `<i>Title</i>` text (normalized) — and, with `--match-year`, the year — as the key.
+* Transfers bracketed links (e.g. `[arxiv]`, `[publisher]`, `[repository]`, `[fulltext]`, `[pdf]`).
+* Skips entries that are ambiguous (duplicate normalized titles) in either source or target.
+* Produces a merged output without altering other formatting.
+
+You can restrict which labels are transferred:
+```bash
+python3 tools/merge_fulltext_links.py --from xml_publications_oa.html \
+		--into publications.html --out publications_merged.html \
+		--labels arxiv,publisher,repository --match-year
+```
+
+### 5. Review and replace
+Open `publications_merged.html` in a browser, validate formatting, then (optionally) replace the live page:
+```bash
+mv publications.html publications_backup.html
+mv publications_merged.html publications.html
+```
+
+### 6. Typical end‑to‑end workflow (quick reference)
+```bash
+# 1. Export EndNote XML (produces exported.xml)
+# 2. Generate with OA augmentation
+python3 tools/generate_publications_xml_page.py exported.xml \
+	--out xml_publications_oa.html --title "Publications" \
+	--augment-open-access --unpaywall-email you@example.com --oa-cache oa_cache.json
+
+# 3. Merge links into manual page
+python3 tools/merge_fulltext_links.py \
+	--from xml_publications_oa.html --into publications.html \
+	--out publications_merged.html --match-year
+
+# 4. Review then publish
+mv publications.html publications_old.html
+mv publications_merged.html publications.html
+```
+
+### Troubleshooting
+| Issue | Cause / Fix |
+|-------|-------------|
+| Script says “Input XML not found” | Verify path to the EndNote export. |
+| Few / missing OA links | DOI absent in XML or no OA version; check the record’s DOI field in EndNote. |
+| Links not merged | Titles normalized differently; try without `--match-year` or inspect duplicates. |
+| ArXiv link missing | DOI might not be associated with an arXiv e-print; arXiv query returns none. |
+
+### Local PDFs and per‑record BibTeX export
+You can provide a directory containing locally named PDFs to automatically link them into the generated HTML. The script expects PDFs to be named using a convention similar to:
+
+	<year>-<surname>-<titlekey>.pdf
+
+where `surname` is the (accent‑stripped) surname of the first author and `titlekey` is a short title key (the script uses the same heuristic as the existing site: articles like "the/a/an" are handled, accents stripped, non‑alphanumeric characters removed).
+
+To auto‑link local PDFs, pass the `--pdf-dir` option pointing to the directory containing your `.pdf` files:
+
+```bash
+python3 tools/generate_publications_xml_page.py exported.xml \
+	--out xml_publications.html --pdf-dir path/to/pdfs
+```
+
+If a matching PDF is found for a record, a `[pdf]` link is appended to that entry in the generated HTML.
+
+Per‑record BibTeX files
+* The generator can also create one `.bib` file per record. Use `--bib-dir` to instruct the script where to write these files. For convenience you can write them into the site's `pdfs/` directory so they upload together with the PDFs:
+
+```bash
+python3 tools/generate_publications_xml_page.py exported.xml \
+	--out xml_publications.html --bib-dir lornat75.github.io-sandbox/pdfs
+```
+
+* Filenames follow the PDF naming convention and end with `.bib` (e.g. `2025-natale-theicub.bib`).
+* The HTML will include a `[bibtex]` link for each record pointing to the relative `.bib` file so links continue to work after uploading the site.
+* The exporter is careful: if a `.bib` file already exists and the newly generated content is identical, the file is left untouched (the script logs `[bib-skip]`). If the content differs, the file is overwritten and the script logs `[bib-update]`.
+
+Project / demo pages
+* The script looks for project/demo URLs in the EndNote `Related URLs` field (XML path `./urls/related-urls/url`) and, as a fallback, `./urls/url`. The first sensible URL (not a DOI and not a PDF) is treated as a project page and rendered in the HTML as a `[project page]` link for that entry.
+* If you prefer to store project links in a different EndNote field, tell the script maintainer the XML tag and it can be mapped easily.
+
+### Skip lookups for specific entries
+You can tell the generator to skip DOI/arXiv/fulltext lookups for specific references by listing them in a text file. Each line should be the citation as it appears in the generated HTML (the `<li> ... </li>` line), or just the inner citation text without the `<li>` wrappers. Link anchors are ignored automatically.
+
+1) Create a file like `lornat75.github.io-sandbox/tools/doi-skip.txt` and paste one reference per line. Example lines (both are accepted):
+
+```
+<li> Doe, J., and Roe, R., <i>Example Paper Title</i>, Journal of Examples, vol. 12, 2021. </li>
+Doe, J., and Roe, R., <i>Example Paper Title</i>, Journal of Examples, vol. 12, 2021.
+```
+
+2) Run the generator with the `--skip-list` option. You can pass a file path or a directory. If a directory is provided, all `*.txt` files inside will be read and combined.
+
+```bash
+# Adjust path to the generator as needed
+python3 /path/to/generate_publications_xml_page.py exported.xml \
+	--out publications-from-xml.html \
+	--lookup --skip-list tools/doi-skip.txt
+
+# Or scan all .txt files in a folder
+python3 /path/to/generate_publications_xml_page.py exported.xml \
+	--out publications-from-xml.html \
+	--lookup --skip-list tools/
+```
+
+Notes:
+* Only lookups are skipped for matching entries; existing DOIs present in the XML will still be rendered as `[doi]` links.
+* Matching is robust to the presence or absence of link anchors in the line; whitespace differences are normalized.
+
+### Implementation Notes
+* All scripts use only the Python standard library (no extra dependencies).
+* Normalization removes HTML tags inside titles and collapses whitespace; this ensures stable matching.
+* The formatting intentionally keeps close to the existing manual style and may need light manual touch‑ups for edge cases.
+
+---
+Feel free to extend these tools (e.g., adding BibTeX export, local PDF integration, or stricter duplicate detection). Contributions or tweaks for your workflow are straightforward: each helper script is in `tools/` and self‑contained.
