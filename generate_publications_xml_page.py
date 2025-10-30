@@ -1027,7 +1027,7 @@ def build_html(records: List[Dict], *, title: str) -> str:
         '<html xmlns="http://www.w3.org/1999/xhtml"><head>',
         '<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />',
         '<link rel="stylesheet" type="text/css" href="style.css" />',
-        "<title>Lorenzo Natale's home page</title>",
+        f"<title>{html.escape(title)}</title>",
         '<script type="text/javascript" src="js/jquery.js"></script>',
         '',
         '</head>',
@@ -1071,7 +1071,7 @@ def main():
     ap = argparse.ArgumentParser(description="Generate an HTML publications page from EndNote XML (optional OA lookups)")
     ap.add_argument("xml_path", help="Path to EndNote XML export")
     ap.add_argument("--out", required=True, help="Output HTML file path")
-    ap.add_argument("--title", default="Publications (XML Export)", help="Page title / H2 heading")
+    ap.add_argument("--title", default="Publications", help="Page title / H2 heading")
     ap.add_argument("--lookup", action="store_true", help="Enable online lookups (arXiv + optional Crossref/OpenAIRE)")
     ap.add_argument("--crossref", action="store_true", help="Attempt Crossref DOI search when DOI missing in XML")
     ap.add_argument("--openaire", action="store_true", help="Enable OpenAIRE fulltext lookups (OFF by default)")
