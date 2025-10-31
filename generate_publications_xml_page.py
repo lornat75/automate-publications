@@ -571,6 +571,12 @@ def _remove_anchor_tags(html_text: str) -> str:
     s = re.sub(r"^\s*<li>\s*", "<li>", s, flags=re.I)
     return s
 
+def _strip_all_tags(html_text: str) -> str:
+    """Remove all HTML tags and normalize whitespace. Leaves plain text only."""
+    s = re.sub(r"<[^>]+>", " ", html_text)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
 
 def _li_keys_for_record(rec: Dict) -> List[str]:
     """Return normalized keys representing the record as it appears in HTML (without links).
@@ -585,7 +591,8 @@ def _li_keys_for_record(rec: Dict) -> List[str]:
     inner = li_nolinks
     if inner.lower().startswith("<li>") and inner.lower().endswith("</li>"):
         inner = inner[4:-5].strip()
-    return [li_nolinks, inner]
+    inner_plain = _strip_all_tags(inner)
+    return [li_nolinks, inner, inner_plain]
 
 
 def augment_records(records: List[Dict], *, cache: Dict[str, Dict], limit: Optional[int], delay: float, verbose: bool, use_openaire: bool, use_crossref: bool, mailto: Optional[str], crossref_threshold: float, crossref_exact: bool, arxiv_exact: bool, skip_set: Optional[Set[str]] = None) -> None:
@@ -1150,6 +1157,8 @@ def main():
     total = len(recs)
     if args.limit is not None:
         recs = recs[:args.limit]
+    # No default or auto-detected skip/exclude files; --skip-list must be provided explicitly
+
     if args.lookup:
         # Optionally remove existing cache file to force fresh lookups
         if args.clean_cache and args.cache:
@@ -1180,7 +1189,8 @@ def main():
 
         # Load skip list if provided
         skip_set: Optional[Set[str]] = None
-        if args.skip_list:
+        skip_source = args.skip_list
+        if skip_source:
             def _read_skip_file(fp: Path) -> List[str]:
                 try:
                     lines = [ln.strip() for ln in fp.read_text(encoding='utf-8').splitlines()]
@@ -1198,9 +1208,11 @@ def main():
                     if inner.lower().startswith('<li>') and inner.lower().endswith('</li>'):
                         inner = inner[4:-5].strip()
                     out.append(inner)
+                    # And a fully tagless plain-text variant (to match lists copied without <i> tags)
+                    out.append(_strip_all_tags(inner))
                 return out
 
-            sp = Path(args.skip_list)
+            sp = Path(skip_source)
             items: List[str] = []
             if sp.is_dir():
                 # Read all .txt files in directory
@@ -1212,7 +1224,7 @@ def main():
             if items:
                 skip_set = set(items)
                 if args.verbose:
-                    print(f"[skip-list] loaded {len(skip_set)} entries from {args.skip_list}")
+                    print(f"[skip-list] loaded {len(skip_set)} entries from {sp}")
 
         augment_records(
             recs,
@@ -1230,6 +1242,7 @@ def main():
         )
         save_cache(args.cache, cache)
     # Always attach DOI links (after possible augmentation) so they appear before rendering
+    # Add DOI links after augmentation; respect skip_set if any
     ensure_doi_links(recs)
     # Add local PDF links if requested
     if args.pdf_dir:
