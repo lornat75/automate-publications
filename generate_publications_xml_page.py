@@ -577,6 +577,15 @@ def _strip_all_tags(html_text: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
+def _canon_text(s: str) -> str:
+    """Canonicalize text for loose comparisons: lowercased, accent-stripped, non-alnum removed, spaces collapsed."""
+    import unicodedata
+    t = ''.join(c for c in unicodedata.normalize('NFKD', s) if not unicodedata.combining(c))
+    t = t.lower()
+    t = NON_ALNUM_RE.sub(' ', t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
 
 def _li_keys_for_record(rec: Dict) -> List[str]:
     """Return normalized keys representing the record as it appears in HTML (without links).
@@ -592,7 +601,8 @@ def _li_keys_for_record(rec: Dict) -> List[str]:
     if inner.lower().startswith("<li>") and inner.lower().endswith("</li>"):
         inner = inner[4:-5].strip()
     inner_plain = _strip_all_tags(inner)
-    return [li_nolinks, inner, inner_plain]
+    inner_canon = _canon_text(inner_plain)
+    return [li_nolinks, inner, inner_plain, inner_canon]
 
 
 def augment_records(records: List[Dict], *, cache: Dict[str, Dict], limit: Optional[int], delay: float, verbose: bool, use_openaire: bool, use_crossref: bool, mailto: Optional[str], crossref_threshold: float, crossref_exact: bool, arxiv_exact: bool, skip_set: Optional[Set[str]] = None) -> None:
@@ -1209,7 +1219,10 @@ def main():
                         inner = inner[4:-5].strip()
                     out.append(inner)
                     # And a fully tagless plain-text variant (to match lists copied without <i> tags)
-                    out.append(_strip_all_tags(inner))
+                    inner_plain = _strip_all_tags(inner)
+                    out.append(inner_plain)
+                    # And a canonicalized variant (punctuation/accents-insensitive)
+                    out.append(_canon_text(inner_plain))
                 return out
 
             sp = Path(skip_source)

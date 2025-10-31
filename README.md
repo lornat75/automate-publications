@@ -1,176 +1,123 @@
-# lornat75.github.io
+# automate-publications
 
-Personal homepage repository.
+Generate a publications HTML page directly from an EndNote XML export. Pure Python 3 standard library.
 
-## Generating `publications.html` from an EndNote XML export
+The main script is `generate_publications_xml_page.py`. It parses EndNote XML, groups entries by year, formats each citation, optionally augments with arXiv/OpenAIRE links, auto-links local PDFs, and can export one `.bib` per record. The generated HTML includes the site’s layout (container + top navigation) so it can be dropped into the existing website.
 
-The repo contains tooling to convert an EndNote XML export directly into a year‑grouped HTML page that matches the style of the manually maintained `publications.html`.
+## Quick start
 
-### 1. Export references from EndNote
-1. In EndNote select the references you want to export (or the whole library).
-2. File → Export…
-3. Choose a filename like `exported.xml`.
-4. Set output format to **XML** (not RIS, not plain text) and save.
+1) Export from EndNote as XML (not RIS or text).
 
-### 2. Generate the base HTML page
-Use the script `tools/generate_publications_xml_page.py` (pure Python 3 standard library).
+2) Generate HTML:
 
 ```bash
-python3 tools/generate_publications_xml_page.py exported.xml \
-		--out xml_publications.html \
-		--title "Publications"
+python3 generate_publications_xml_page.py \
+  /path/to/publications-endnote.xml \
+  --out /path/to/publications-from-xml.html \
+  --title "Publications"
 ```
 
-What it does:
-* Parses the EndNote XML records.
-* Normalizes authors to “Surname, I.” format.
-* Groups entries by year (descending) and renders `<ul>` lists under `<h3>YEAR</h3>` sections.
-* Attempts a best‑effort formatting based on record type (conference, journal, book section, etc.).
-* Skips entries whose fields contain “under submission”.
+Defaults:
+- Page title defaults to “Publications” if `--title` is omitted.
+- Entries with “under submission/review” hints are skipped.
 
-### 3. (Optional) Add Open Access / preprint links
-You can have the generator call Unpaywall (and arXiv as fallback) to attach labeled links such as `[arxiv]`, `[publisher]`, or repository labels.
+## Optional lookups and cache
 
 ```bash
-python3 tools/generate_publications_xml_page.py exported.xml \
-		--out xml_publications_oa.html \
-		--title "Publications" \
-		--augment-open-access \
-		--unpaywall-email you@example.com \
-		--oa-cache oa_lookup_cache.json
+python3 generate_publications_xml_page.py input.xml \
+  --out out.html \
+  --lookup \
+  --crossref \
+  --openaire \
+  --cache oa_cache.json \
+  --clean-cache \
+  --mailto you@example.com \
+  --verbose
 ```
 
 Notes:
-* `--unpaywall-email` is required by the Unpaywall API usage policy (a real contact email).
-* `--oa-cache` stores a JSON cache of DOI lookups so subsequent runs are fast and offline‑friendly.
-* If Unpaywall does not yield an OA link but the DOI exists on arXiv, an `[arxiv]` link is added.
+- arXiv: Title queries require canonical exact match by default; disable with `--no-arxiv-exact`.
+- Crossref: controlled by `--crossref`, threshold via `--crossref-threshold` or `--crossref-exact`.
+- The EndNote “Notes” field is scanned for DOI/arXiv identifiers; arXiv DOIs like `10.48550/arXiv.<id>` short-circuit the lookup.
+- `--cache` stores lookup results; `--clean-cache` removes it before a run.
 
-Additional arXiv/Notes behaviour
-* The generator also inspects the EndNote `Notes` field for DOIs or arXiv identifiers/URLs. If a DOI of the form `10.48550/arXiv.<id>` or an arXiv URL/ID is present in `Notes`, that arXiv preprint is used directly (no title‑based search).
-* By default the script requires a near‑exact canonical title match for arXiv results (this avoids false positives). You can opt out with `--no-arxiv-exact` if you prefer a looser matching strategy.
-* Use `--clean-cache` to remove the lookup cache file before running (forces fresh network lookups).
+## Local PDFs
 
-### 4. (Optional) Merge discovered links into the hand‑maintained page
-If you keep editing `publications.html` manually but want to bring in new links (arXiv/publisher/repository/pdf) found in the generated file, use the merge tool:
+Pass a directory containing PDFs named like `<year>-<surname>-<titlekey>.pdf` to auto-add `[pdf]` links:
 
 ```bash
-python3 tools/merge_fulltext_links.py \
-		--from xml_publications_oa.html \
-		--into publications.html \
-		--out publications_merged.html \
-		--match-year
+python3 generate_publications_xml_page.py input.xml \
+  --out out.html \
+  --pdf-dir /path/to/site/pdfs \
+  --verbose
 ```
 
-Explanation:
-* Uses the italicized `<i>Title</i>` text (normalized) — and, with `--match-year`, the year — as the key.
-* Transfers bracketed links (e.g. `[arxiv]`, `[publisher]`, `[repository]`, `[fulltext]`, `[pdf]`).
-* Skips entries that are ambiguous (duplicate normalized titles) in either source or target.
-* Produces a merged output without altering other formatting.
+Naming:
+- `surname` is the accent-stripped surname of the first author.
+- `titlekey` is derived from the title (articles handled, punctuation/accents stripped).
 
-You can restrict which labels are transferred:
-```bash
-python3 tools/merge_fulltext_links.py --from xml_publications_oa.html \
-		--into publications.html --out publications_merged.html \
-		--labels arxiv,publisher,repository --match-year
-```
+## Per-record BibTeX export
 
-### 5. Review and replace
-Open `publications_merged.html` in a browser, validate formatting, then (optionally) replace the live page:
-```bash
-mv publications.html publications_backup.html
-mv publications_merged.html publications.html
-```
-
-### 6. Typical end‑to‑end workflow (quick reference)
-```bash
-# 1. Export EndNote XML (produces exported.xml)
-# 2. Generate with OA augmentation
-python3 tools/generate_publications_xml_page.py exported.xml \
-	--out xml_publications_oa.html --title "Publications" \
-	--augment-open-access --unpaywall-email you@example.com --oa-cache oa_cache.json
-
-# 3. Merge links into manual page
-python3 tools/merge_fulltext_links.py \
-	--from xml_publications_oa.html --into publications.html \
-	--out publications_merged.html --match-year
-
-# 4. Review then publish
-mv publications.html publications_old.html
-mv publications_merged.html publications.html
-```
-
-### Troubleshooting
-| Issue | Cause / Fix |
-|-------|-------------|
-| Script says “Input XML not found” | Verify path to the EndNote export. |
-| Few / missing OA links | DOI absent in XML or no OA version; check the record’s DOI field in EndNote. |
-| Links not merged | Titles normalized differently; try without `--match-year` or inspect duplicates. |
-| ArXiv link missing | DOI might not be associated with an arXiv e-print; arXiv query returns none. |
-
-### Local PDFs and per‑record BibTeX export
-You can provide a directory containing locally named PDFs to automatically link them into the generated HTML. The script expects PDFs to be named using a convention similar to:
-
-	<year>-<surname>-<titlekey>.pdf
-
-where `surname` is the (accent‑stripped) surname of the first author and `titlekey` is a short title key (the script uses the same heuristic as the existing site: articles like "the/a/an" are handled, accents stripped, non‑alphanumeric characters removed).
-
-To auto‑link local PDFs, pass the `--pdf-dir` option pointing to the directory containing your `.pdf` files:
+Write one `.bib` file per entry (filenames mirror the PDF naming convention):
 
 ```bash
-python3 tools/generate_publications_xml_page.py exported.xml \
-	--out xml_publications.html --pdf-dir path/to/pdfs
+python3 generate_publications_xml_page.py input.xml \
+  --out out.html \
+  --bib-dir /path/to/site/pdfs \
+  --verbose
 ```
 
-If a matching PDF is found for a record, a `[pdf]` link is appended to that entry in the generated HTML.
+Behavior:
+- If an existing `.bib` file is identical, it is left untouched (`[bib-skip]`); otherwise it is overwritten (`[bib-update]`).
+- The HTML includes a `[bibtex]` link for each exported entry.
 
-Per‑record BibTeX files
-* The generator can also create one `.bib` file per record. Use `--bib-dir` to instruct the script where to write these files. For convenience you can write them into the site's `pdfs/` directory so they upload together with the PDFs:
+## Skip DOI/arXiv lookups for specific entries
+
+Use `--skip-list` to point to a text file (or a directory of `.txt` files) listing references for which network lookups should be skipped. This does NOT remove entries from the page and does NOT hide DOIs present in the XML—it only prevents DOI/arXiv/fulltext lookups for the matching entries.
+
+Accepted line formats (one per line):
+- The exact `<li> ... </li>` line copied from the generated HTML, or
+- The same line without the surrounding `<li>` wrappers, or
+- Plain text without HTML tags. Link anchors are ignored automatically, and whitespace is normalized.
+
+Example:
 
 ```bash
-python3 tools/generate_publications_xml_page.py exported.xml \
-	--out xml_publications.html --bib-dir lornat75.github.io-sandbox/pdfs
+python3 generate_publications_xml_page.py input.xml \
+  --out out.html \
+  --lookup \
+  --skip-list /path/to/skip.txt \
+  --verbose
 ```
 
-* Filenames follow the PDF naming convention and end with `.bib` (e.g. `2025-natale-theicub.bib`).
-* The HTML will include a `[bibtex]` link for each record pointing to the relative `.bib` file so links continue to work after uploading the site.
-* The exporter is careful: if a `.bib` file already exists and the newly generated content is identical, the file is left untouched (the script logs `[bib-skip]`). If the content differs, the file is overwritten and the script logs `[bib-update]`.
+Logs:
+- You will see `[skip-list] loaded N entries …` when read.
+- For matched records: `[skip-lookups] <title>`.
 
-Project / demo pages
-* The script looks for project/demo URLs in the EndNote `Related URLs` field (XML path `./urls/related-urls/url`) and, as a fallback, `./urls/url`. The first sensible URL (not a DOI and not a PDF) is treated as a project page and rendered in the HTML as a `[project page]` link for that entry.
-* If you prefer to store project links in a different EndNote field, tell the script maintainer the XML tag and it can be mapped easily.
+## Site layout
 
-### Skip lookups for specific entries
-You can tell the generator to skip DOI/arXiv/fulltext lookups for specific references by listing them in a text file. Each line should be the citation as it appears in the generated HTML (the `<li> ... </li>` line), or just the inner citation text without the `<li>` wrappers. Link anchors are ignored automatically.
+The generated HTML includes the site’s container and top navigation markup (doctype, head with `style.css` and `js/jquery.js`, `#container` + `#nav`). The H2 heading uses `--title`.
 
-1) Create a file like `lornat75.github.io-sandbox/tools/doi-skip.txt` and paste one reference per line. Example lines (both are accepted):
+## CLI reference (high level)
 
-```
-<li> Doe, J., and Roe, R., <i>Example Paper Title</i>, Journal of Examples, vol. 12, 2021. </li>
-Doe, J., and Roe, R., <i>Example Paper Title</i>, Journal of Examples, vol. 12, 2021.
-```
+- `--out PATH`: Output HTML file (required)
+- `--title TEXT`: Page and H2 title (default: “Publications”)
+- `--lookup`: Enable network lookups
+- `--crossref`, `--crossref-threshold FLOAT`, `--crossref-exact`
+- `--openaire`
+- `--arxiv-exact` / `--no-arxiv-exact`
+- `--cache PATH`, `--clean-cache`
+- `--limit N`, `--delay SECONDS`, `--mailto EMAIL`, `--verbose`
+- `--pdf-dir DIR`: Auto-link local PDFs
+- `--bib-dir DIR`: Export per-record `.bib` files and add `[bibtex]` links
+- `--skip-list PATH|DIR`: Skip lookups for listed references (keeps entries; does not hide XML DOIs)
 
-2) Run the generator with the `--skip-list` option. You can pass a file path or a directory. If a directory is provided, all `*.txt` files inside will be read and combined.
+## Troubleshooting
 
-```bash
-# Adjust path to the generator as needed
-python3 /path/to/generate_publications_xml_page.py exported.xml \
-	--out publications-from-xml.html \
-	--lookup --skip-list tools/doi-skip.txt
-
-# Or scan all .txt files in a folder
-python3 /path/to/generate_publications_xml_page.py exported.xml \
-	--out publications-from-xml.html \
-	--lookup --skip-list tools/
-```
-
-Notes:
-* Only lookups are skipped for matching entries; existing DOIs present in the XML will still be rendered as `[doi]` links.
-* Matching is robust to the presence or absence of link anchors in the line; whitespace differences are normalized.
-
-### Implementation Notes
-* All scripts use only the Python standard library (no extra dependencies).
-* Normalization removes HTML tags inside titles and collapses whitespace; this ensures stable matching.
-* The formatting intentionally keeps close to the existing manual style and may need light manual touch‑ups for edge cases.
+- No `[pdf]` link: filename doesn’t match the expected convention or PDF not present in the directory.
+- No `[preprint]`: arXiv match requires canonical title equality by default; try `--no-arxiv-exact` if needed.
+- Wrong DOI found: increase `--crossref-threshold`, or add the item to `--skip-list` and provide the DOI in the XML.
+- Skips not applied: copy the full `<li> ... </li>` line from the generated HTML into the skip file (or paste the inner text); anchors are ignored.
 
 ---
-Feel free to extend these tools (e.g., adding BibTeX export, local PDF integration, or stricter duplicate detection). Contributions or tweaks for your workflow are straightforward: each helper script is in `tools/` and self‑contained.
+This tool uses only the Python standard library and is designed to be conservative (exact/fuzzy matching with cache). Adjust options as needed for your workflow.
